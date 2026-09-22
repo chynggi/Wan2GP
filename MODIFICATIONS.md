@@ -7,7 +7,7 @@ Distributed under the WanGP Community License 2.0 for Free Use only.
 This notice satisfies §4.1(d) of that license (statement of modification and dates).
 No sponsorship, endorsement or affiliation with the upstream Licensor is implied.
 
-Upstream base: `5b9bc5c` (2026-09-21)
+Upstream base: `9ffd0a67` (2026-09-22)
 
 ---
 
@@ -76,3 +76,35 @@ Added: third-party plugins cloned into `plugins/` (each carries its own `.git`),
 Note the upstream patterns `/plugins/wan2gp-*/` and `/plugins/wangp-*/` are
 lowercase and do not match mixed-case directory names on a case-sensitive
 filesystem.
+
+## 2026-09-22 — prompt enhancer output budget
+
+Raised `*_prompt_enhancer_max_tokens*` for MiniMax H3 and LTX-2.
+
+`shared/prompt_enhancer/prompt_enhance_utils.py` makes a single `generate()`
+call with one `max_new_tokens`, so when thinking is enabled (`"K"` in the
+enhancer mode, `wgp.py:6449`) the chain-of-thought and the final prompt share
+that one budget. There is no separate reasoning budget. Running out mid-thought
+truncates or loses the prompt.
+
+(`llm_budget: 18000` in `shared/prompt_enhancer/assets.py` is unrelated — it
+becomes an mmgp VRAM budget in MB, not a token count.)
+
+| file | key | before | after |
+|---|---|---:|---:|
+| `models/minimax_h3/minimax_h3_handler.py:322` | `text_..._max_tokens` | 1024 | 3072 |
+| `models/minimax_h3/minimax_h3_handler.py:323` | `text_..._max_tokens1` | 2048 | 4096 |
+| `models/minimax_h3/minimax_h3_handler.py:514-515` | `text_/video_..._max_tokens` | 2048 / 1024 | 4096 / 3072 |
+| `models/ltx2/ltx2_handler.py:617-619` | `text_/video_/image_..._max_tokens1` | 1536 | 3072 |
+| `models/ltx2/ltx2_handler.py:682-683` | `text_/video_..._max_tokens1` | 1024 | 3072 |
+
+H3 needs the room: its prompt format is three sections
+(`integrated_multimodal_description`, `overall_soundscape`, `non_diegetic_music`).
+The Ref2VA path keeps the larger budget upstream already gave it.
+
+`models/ltx2/ltx_audio_tts_handler.py` (768 / 1024) is left unchanged — TTS
+prompts are short.
+
+`max_new_tokens` is only a cap; generation still stops at EOS, so short outputs
+stay short. Thinking models do tend to think longer when given room, so
+enhancement takes more wall time.
