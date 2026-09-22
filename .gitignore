@@ -55,3 +55,15 @@ plugins_local.json
 /plugins/wangp-*/
 loras_url_cache.json
 loras_url_cache_v2.json
+
+# --- local fork (chynggi) ---
+# 외부에서 clone 해 온 서드파티 플러그인 (각자 .git 을 가진 별도 저장소)
+/plugins/MiniMax-H3-Director/
+/plugins/MiniMaxH3Mod-for-WanGP/
+/plugins/Wan2GP-Minimax-H3-Prompt-Builder/
+# 로컬 빌드 산출물
+/.build/
+# 런타임 상태 / 백업
+/workspaces/
+*.bak
+*.bak-*
