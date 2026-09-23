@@ -655,11 +655,21 @@ This automated script will:
 
 ### vast.ai (CUDA 13.0 / RTX 5090)
 
+vast.ai 오퍼는 CUDA ≥ 13.0 (driver ≥ 580, RTX 5090 등)으로 필터링하세요. GHCR 패키지는 Public 이어야 pull 됩니다 (private 이면 vast 에 registry credential 전달).
+
 ```bash
 docker pull ghcr.io/chynggi/wan2gp:cuda-13.0   # 또는 <short>-<date>-cuda-13.0 (workflow_dispatch 로 빌드)
 ```
 
-인스턴스에서 레포를 `/workspace` 에 클론한 뒤 `./entrypoint.sh --profile 5 --attention sage --compile` 으로 기동합니다.
+`/workspace` 에는 이미 `requirements.txt`/`entrypoint.sh` 가 있으므로 레포는 하위 디렉터리에 클론합니다:
+
+```bash
+git clone https://github.com/deepbeepmeep/Wan2GP.git /workspace/Wan2GP
+chown -R 1000:1000 /workspace/Wan2GP
+cd /workspace/Wan2GP && /workspace/entrypoint.sh --profile 5 --attention sage --compile
+```
+
+Gradio 는 7860 포트로 서비스되므로 컨테이너 실행 시 `-p 7860:7860` (또는 vast.ai 포트 매핑)을 지정하세요.
 
 ## 📦 Installation
 
