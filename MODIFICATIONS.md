@@ -144,6 +144,12 @@ is a pruned (20B) model, not the full 33B. The TURBO delta is baked into the
 weights, so no turbo LoRA is listed. Defaults: `num_inference_steps=6`,
 `guidance_scale=1.0`, `sample_solver=res_multistep`.
 
+The non-Turbo pair
+`finetunes/minimax_h3_{ref2va,fl2va}_pruned_10eros_max_hybrid.json` registers
+`ckpts/10Eros_Max_h3_hybrid_beta5_int8.safetensors` (same model without the baked
+turbo delta) under the same two architectures and inherits the H3 full-step
+defaults (`euler`, 20 steps).
+
 ## 2026-09-23 — comfy-kitchen native sm_86 build
 
 Rebuilt the `comfy-kitchen` CUDA extension natively for sm_86 instead of relying
