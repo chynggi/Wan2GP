@@ -653,6 +653,14 @@ This automated script will:
 
 **Supported GPUs:** RTX 40XX, RTX 30XX, RTX 20XX, GTX 16XX, GTX 10XX, Tesla V100, A100, H100, and more.
 
+### vast.ai (CUDA 13.0 / RTX 5090)
+
+```bash
+docker pull ghcr.io/chynggi/wan2gp:cuda-13.0   # 또는 <short>-<date>-cuda-13.0 (workflow_dispatch 로 빌드)
+```
+
+인스턴스에서 레포를 `/workspace` 에 클론한 뒤 `./entrypoint.sh --profile 5 --attention sage --compile` 으로 기동합니다.
+
 ## 📦 Installation
 
 ### Nvidia
