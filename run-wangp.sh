@@ -19,6 +19,7 @@ exec .venv/bin/python wgp.py \
   --attention "$ATTN" \
   --profile 2 \
   --perc-reserved-mem-max 0.6 \
+  --listen \
   --advanced \
   --open-browser \
   "$@"

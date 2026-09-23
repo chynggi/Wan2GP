@@ -113,6 +113,16 @@ def detect(state_dict, verboseLevel=1, metadata=None):
             "details": {"count": len(specs), "names": [spec["name"] for spec in specs[:8]]}}
 
 
+def _fp8_e4m3_supported(device=None):
+    """Triton can only codegen fp8e4nv kernels on Ada/Hopper (sm 8.9+) GPUs."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        return torch.cuda.get_device_capability(device) >= (8, 9)
+    except Exception:
+        return False
+
+
 def convert_to_quanto(state_dict, default_dtype, verboseLevel=1, detection=None, metadata=None):
     if detection is not None and not detection.get("matched", False):
         return {"state_dict": state_dict, "quant_map": {}}
@@ -121,7 +131,11 @@ def convert_to_quanto(state_dict, default_dtype, verboseLevel=1, detection=None,
     for spec in specs:
         base = spec["name"]
         state_dict[base + ".weight._data"] = state_dict.pop(base + ".weight")
-        state_dict[base + ".weight._s_rel"] = state_dict.pop(base + ".weight_s_rel")
+        s_rel = state_dict.pop(base + ".weight_s_rel")
+        if s_rel.dtype == torch.float8_e4m3fn and not _fp8_e4m3_supported():
+            # Triton cannot codegen fp8e4nv on pre-Ada GPUs; bf16 carries e4m3 values losslessly.
+            s_rel = s_rel.to(torch.bfloat16)
+        state_dict[base + ".weight._s_rel"] = s_rel
         state_dict[base + ".weight._s_channel"] = state_dict.pop(base + ".weight_s_channel")
         if spec["codebook"] is not None:
             state_dict[base + ".weight._codebook"] = state_dict.pop(base + ".weight_codebook")
