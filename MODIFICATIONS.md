@@ -108,3 +108,57 @@ prompts are short.
 `max_new_tokens` is only a cap; generation still stops at EOS, so short outputs
 stay short. Thinking models do tend to think longer when given room, so
 enhancement takes more wall time.
+
+## 2026-09-23 — MiniMax H3 W4A8 `s_rel` fp8 fix (sm_86)
+
+`shared/qtypes/asym_w4a8_int8.py` — added `_fp8_e4m3_supported()` and cast
+`weight_s_rel` to `bfloat16` in `convert_to_quanto` when the target GPU cannot
+run fp8e4nv kernels.
+
+W4A8 community checkpoints (e.g. `10Eros_Max_h3_TURBO-hybrid_beta5_w4a8`) store
+the relative scale as `float8_e4m3fn`. `_decode_w4a8_triton` loads it inside a
+Triton kernel, and Triton refuses to codegen fp8e4nv on pre-Ada GPUs:
+
+```
+CompilationError: type fp8e4nv not supported in this architecture.
+The supported fp8 dtypes are ('fp8e4b15', 'fp8e5')
+```
+
+The existing backend probe (`quanto_int8_triton._runtime_compatible`) only checks
+`cc_major >= 8`, which is true for the RTX 3060 (sm_86), so it picks Triton and
+the kernel fails at compile time. The official DeepBeepMeep int8 checkpoints use
+a F32 `weight_scale` (`int8_convrot`) and never hit this.
+
+Cast is lossless (every e4m3 value is exactly representable in bf16) and is
+skipped on Ada/Hopper (sm >= 8.9), where the fp8 path still works.
+
+## 2026-09-23 — 10Eros-Max H3 finetune presets (new)
+
+`finetunes/minimax_h3_ref2va_pruned_10eros_max_turbo_hybrid.json` and
+`finetunes/minimax_h3_fl2va_pruned_10eros_max_turbo_hybrid.json`.
+
+Register `TenStrip/10Eros-Max` `10Eros_Max_h3_TURBO-hybrid_beta5_w4a8_14gb_optimized.safetensors`
+as a local-path finetune for both the pruned Ref2VA and FL2VA architectures. The
+checkpoint's 474 weight bases match `MiniMax-H3-*_pruned` in shape exactly, so it
+is a pruned (20B) model, not the full 33B. The TURBO delta is baked into the
+weights, so no turbo LoRA is listed. Defaults: `num_inference_steps=6`,
+`guidance_scale=1.0`, `sample_solver=res_multistep`.
+
+## 2026-09-23 — comfy-kitchen native sm_86 build
+
+Rebuilt the `comfy-kitchen` CUDA extension natively for sm_86 instead of relying
+on PTX JIT:
+
+```
+env -u LD_LIBRARY_PATH COMFY_CUDA_ARCHS=86 \
+  uv pip install --python /media/chynggi/Data-S/Wan2GP/.venv/bin/python \
+  -e /media/chynggi/EXTRA/Linux-ComfyUI/comfy-kitchen/. --no-build-isolation
+```
+
+`nanobind` was missing from the venv (required because `--no-build-isolation`);
+system cmake 4.2.3 and ninja are used. The source tree also held a stale
+`_C.abi3.so` from a 3.12+ build; `comfy_kitchen/backends/cuda/__init__.py` loads
+`_C.abi3.so` first and it failed with `undefined symbol: PyObject_GetTypeData`,
+hiding the freshly built `_C.cpython-311-...so`. Renamed it to
+`_C.abi3.so.py312-stale-bak` (safe to delete). `_probe_kitchen()` now returns
+`available` and `resolve_backend("auto") == "kitchen"`.
