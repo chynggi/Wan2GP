@@ -116,6 +116,23 @@ with open('setup.py', 'w') as f:
     f.write(content)
 
 print(f"patched flash-attn setup.py gencode -> {arch_list}")
+
+# Bundled (old) cutlass gates the versioned driver-entry-point path on
+# `MAJOR >= 12 && MINOR >= 5`, which is false for CUDA 13.0 and falls back to
+# cudaGetDriverEntryPoint + unversioned PFN_* typedefs that CUDA 13 removed.
+hdr = 'csrc/cutlass/include/cutlass/cuda_host_adapter.hpp'
+with open(hdr, 'r') as f:
+    content = f.read()
+
+old_cond = '#if (__CUDACC_VER_MAJOR__ >= 12 && __CUDACC_VER_MINOR__ >= 5)'
+new_cond = '#if (__CUDACC_VER_MAJOR__ > 12 || (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ >= 5))'
+
+assert content.count(old_cond) == 1, "cutlass cuda_host_adapter.hpp version-check pattern not found - upstream drift, re-check manually"
+
+with open(hdr, 'w') as f:
+    f.write(content.replace(old_cond, new_cond))
+
+print("patched bundled cutlass cuda_host_adapter.hpp CUDA 13 version check")
 EOF
 
 # `pip download --no-binary :all:` would build sdist metadata in an isolated env where
