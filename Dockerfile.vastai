@@ -118,7 +118,12 @@ with open('setup.py', 'w') as f:
 print(f"patched flash-attn setup.py gencode -> {arch_list}")
 EOF
 
-RUN pip download --no-cache-dir --no-deps --no-binary :all: -d /tmp/flash-attn-src flash-attn==2.7.2.post1 && \
+# `pip download --no-binary :all:` would build sdist metadata in an isolated env where
+# flash-attn's setup.py does `import torch` at module scope and fails (no torch there) ->
+# fetch the sdist directly from PyPI's file host instead.
+RUN mkdir -p /tmp/flash-attn-src && \
+    curl -fsSL -o /tmp/flash-attn-src/flash_attn-2.7.2.post1.tar.gz \
+      https://files.pythonhosted.org/packages/source/f/flash-attn/flash_attn-2.7.2.post1.tar.gz && \
     tar -xzf /tmp/flash-attn-src/flash_attn-2.7.2.post1.tar.gz -C /tmp/flash-attn-src && \
     cd /tmp/flash-attn-src/flash_attn-2.7.2.post1 && \
     python3 /tmp/patch_flash_setup.py && \
