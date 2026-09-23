@@ -67,3 +67,4 @@ loras_url_cache_v2.json
 /workspaces/
 *.bak
 *.bak-*
+.commandcode/
