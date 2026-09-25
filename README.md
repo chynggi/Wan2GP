@@ -667,21 +667,32 @@ This automated script will:
 
 ### vast.ai (CUDA 13.0 / RTX 5090)
 
-vast.ai 오퍼는 CUDA ≥ 13.0 (driver ≥ 580, RTX 5090 등)으로 필터링하세요. GHCR 패키지는 Public 이어야 pull 됩니다 (private 이면 vast 에 registry credential 전달).
+vast 공식 `vastai/wan2gp` 와 동일한 UX(Instance Portal + Caddy TLS/인증 + Supervisor + Jupyter + SSH)를
+제공하는 파생 이미지입니다. 베이스는 `vastai/pytorch` (→ `vastai/base-image`)이고, 차이는 CUDA 13.0 /
+torch 2.10.0+cu130 에 sm_120 커스텀 커널(SageAttention v2/v3, FlashAttention, comfy-kitchen, nunchaku)을
+얹은 점입니다. 앱 코드는 빌드 시 `/opt/workspace-internal/Wan2GP` 로 클론되어 첫 부팅에
+`/workspace/Wan2GP` 로 복사되고, Supervisor 서비스 `wan2gp` 가 `wgp.py` 를 상시 실행합니다.
+
+vast.ai 오퍼는 **CUDA ≥ 13.0 (driver ≥ 580, RTX 5090 등)** 으로 필터링하세요. GHCR 패키지는
+Public 이어야 pull 됩니다 (private 이면 vast 에 registry credential 전달).
 
 ```bash
 docker pull ghcr.io/chynggi/wan2gp:cuda-13.0   # 또는 <short>-<date>-cuda-13.0 (workflow_dispatch 로 빌드)
 ```
 
-`/workspace` 에는 이미 `requirements.txt`/`entrypoint.sh` 가 있으므로 레포는 하위 디렉터리에 클론합니다:
+템플릿 설정 (공식 `vastai/wan2gp` 와 동일):
 
-```bash
-git clone https://github.com/deepbeepmeep/Wan2GP.git /workspace/Wan2GP
-chown -R 1000:1000 /workspace/Wan2GP
-cd /workspace/Wan2GP && /workspace/entrypoint.sh --profile 5 --attention sage --compile
-```
+| 항목 | 값 |
+|---|---|
+| Launch Mode | Docker entrypoint |
+| Docker Entrypoint | 이미지 기본값 유지 (`/opt/instance-tools/bin/entrypoint.sh`) — **덮어쓰지 말 것** |
+| Ports | `1111`, `17860`, `8080`, `8384` (필요시 `6006`) |
+| `OPEN_BUTTON_PORT` | `1111` (Open → Instance Portal) |
+| `PORTAL_CONFIG` | `localhost:1111:11111:/:Instance Portal\|localhost:17860:7860:/:Wan2GP\|localhost:8080:18080:/:Jupyter\|localhost:8080:8080:/terminals/1:Jupyter Terminal\|localhost:8384:18384:/:Syncthing` |
+| `WAN2GP_ARGS` | 예: `--profile 5 --attention sage --compile` (선택) |
 
-Gradio 는 7860 포트로 서비스되므로 컨테이너 실행 시 `-p 7860:7860` (또는 vast.ai 포트 매핑)을 지정하세요.
+Caddy 가 외부 `17860` → 내부 `7860` 을 프록시하므로 Open 버튼으로 포털에 접속한 뒤 Wan2GP 를 선택하면
+됩니다. 서비스는 `supervisorctl status wan2gp` / `supervisorctl restart wan2gp` 로 관리합니다.
 
 ## 📦 Installation
 

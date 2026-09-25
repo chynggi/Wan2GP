@@ -1,58 +1,60 @@
-# Dockerfile.vastai — vast.ai RTX 5090(sm_120)용 CUDA 13.0 이미지
-# Base ref: vastai/wan2gp:8a491d5-2026-09-23-cuda-12.9 (CUDA 12.9 -> 13.0 전환)
-# 기존 로컬용 Dockerfile(CUDA 12.8)은 이 파일로 대체하지 않는다.
-FROM nvidia/cuda:13.0.0-cudnn-devel-ubuntu22.04
+# Dockerfile.vastai — vast.ai 파생 이미지 (RTX 5090 / sm_120, CUDA 13.0)
+#
+# vast 공식 파생 이미지(derivatives/pytorch/derivatives/wan2gp)와 동일한 UX:
+#   Instance Portal + Caddy(TLS/인증) + Supervisor 상시 실행 + Jupyter + SSH + Syncthing.
+# 차이는 베이스가 CUDA 13.0 / torch 2.10.0+cu130 이고, sm_120 커스텀 커널을 추가로
+# 빌드한다는 점이다 (SageAttention v2/v3, FlashAttention, comfy-kitchen, nunchaku).
+#
+# 베이스: vastai/pytorch (vastai/base-image 파생)
+#   torch 2.10.0 (cu130 backend), CUDA toolkit 13.0.3, cuDNN 9.14, Python 3.11
+#   /venv/main, WORKSPACE=/workspace, user(UID 1001)
+#   ENTRYPOINT=/opt/instance-tools/bin/entrypoint.sh  ← 이 파일에서 덮어쓰지 않는다
+#
+# 앱 코드는 /opt/workspace-internal/Wan2GP 로 클론되고, 베이스 이미지가 첫 부팅 때
+# $WORKSPACE(/workspace)/Wan2GP 로 복사한다. 실행은 Supervisor 서비스 wan2gp 가 맡는다.
+# (ROOT/ 참고: etc/supervisor/conf.d/wan2gp.conf, opt/supervisor-scripts/wan2gp.sh)
+FROM vastai/pytorch:2.10.0-cuda-13.0.3-py311-24.04-2026-09-08
 
-# RTX 5090 계열 (sm_120). 예: --build-arg CUDA_ARCHITECTURES="8.6;12.0"
+# RTX 50xx(sm_120). 예: --build-arg CUDA_ARCHITECTURES="8.6;12.0"
 ARG CUDA_ARCHITECTURES="12.0"
 # GHA 표준 러너 4 vCPU 기준. 로컬: --build-arg MAX_JOBS=$(nproc)
 ARG MAX_JOBS=4
 
-ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive \
+    TORCH_CUDA_ARCH_LIST="${CUDA_ARCHITECTURES}" \
+    FORCE_CUDA="1" \
+    MAX_JOBS="${MAX_JOBS}" \
+    COMFY_CUDA_ARCHS="120f"
 
 # ── 1. 시스템 의존성 ─────────────────────────────────────────────────
+# base 이미지에 git/cmake/ninja 는 있으나 ffmpeg/GL/ALSA 는 보강한다
+# (libasound2-dev 는 공식 이미지와 동일하게 SDL 오디오용)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ca-certificates curl \
-      git wget cmake ninja-build \
-      libgl1 libglib2.0-0 ffmpeg && \
+      ffmpeg libgl1 libglib2.0-0 libasound2-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# ── 1b. Python 3.11.14 via uv (deadsnakes jammy 는 3.11.16 만 제공하므로 사용 불가) ──
-# pin: Python 3.11.14 — 패치 버전이 바뀌면 이 assert 가 빌드를 멈춘다 (의도적)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
-ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
-RUN uv python install 3.11.14 && \
-    uv venv --seed --python 3.11.14 /opt/venv && \
-    chmod -R a+rX /opt/venv /opt/uv-python
-
-# /opt/venv 의 python3/pip 를 PATH 최우선으로 — entrypoint.sh 의 `su -p user -c "python3 wgp.py ..."`
-# 는 -p 로 PATH 를 보존하므로 런타임 유저도 동일하게 이 venv 를 사용한다
-ENV PATH="/opt/venv/bin:${PATH}"
-RUN python3 -m pip --version && \
-    python3 -c "import sys; assert sys.version_info[:3] == (3, 11, 14), sys.version; print('Python 3.11.14 OK')"
-
-WORKDIR /workspace
-COPY requirements.txt .
-
-# ── 2. torch (cu130, 스펙 지정 명령 그대로) → triton → requirements ────
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN pip install --no-cache-dir torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu130 && \
-    python3 -c "import torch; assert torch.__version__.startswith('2.10.0'), torch.__version__; assert torch.version.cuda.startswith('13'), torch.version.cuda; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+# ── 2. Wan2GP 소스 클론 + requirements 설치 ───────────────────────────
+# 주의: base 의 python3 는 시스템 3.12 이므로 모든 RUN 에서 /venv/main 을 활성화한다.
+# requirements 의 torch 계열 핀은 제거해 베이스 torch 2.10.0+cu130 을 단일 소스로 유지
+# (torchcodec 은 upstream 이 어디서도 import 하지 않는 dead dep).
+ARG WAN2GP_REPO=https://github.com/chynggi/Wan2GP.git
+ARG WAN2GP_REF=main
+RUN . /venv/main/bin/activate && \
+    python -c "import torch; assert torch.__version__.startswith('2.10.0'), torch.__version__; assert torch.version.cuda.startswith('13'), torch.version.cuda; print('torch', torch.__version__, 'cuda', torch.version.cuda)" && \
+    git clone "${WAN2GP_REPO}" /opt/workspace-internal/Wan2GP && \
+    cd /opt/workspace-internal/Wan2GP && \
+    git checkout "${WAN2GP_REF}" && \
+    sed -i -E '/^(torch|torchvision|torchaudio|torchcodec)([[:space:]]|[<>=!])/d' requirements.txt && \
+    uv pip install --no-cache-dir -r requirements.txt
 
 # SageAttention v2/v3 및 Wan2GP sage3 모드 모두 Triton 필요 (setup_config triton v37)
-RUN pip install --no-cache-dir "triton>=3.6,<3.7"
+RUN . /venv/main/bin/activate && \
+    pip install --no-cache-dir "triton>=3.6,<3.7"
 
-# requirements 는 comfy-kitchen 0.2.35 휠을 포함하지만, 아래 6단계에서 sm120 소스 빌드로 덮어쓴다
-RUN pip install --no-cache-dir -r requirements.txt
-
-# ── 3. 빌드 환경 변수 (Sage2/3, flash-attn 공통) ────────────────────────
-ENV TORCH_CUDA_ARCH_LIST="${CUDA_ARCHITECTURES}" \
-    FORCE_CUDA="1" \
-    MAX_JOBS="${MAX_JOBS}"
-
-# torch 헤더 패치: CUDA 13.x nvcc 는 List_inl.h 의 decltype difference_type 을 거부 (MODIFICATIONS.md/patch-torch-header.sh 참조)
-# torch==2.10.0 고정이므로 pattern 미일치 = drift → 의도적으로 빌드 실패시킨다
+# ── 3. torch 헤더 패치: CUDA 13.x nvcc 는 List_inl.h 의 decltype difference_type 을 거부
+# (MODIFICATIONS.md/patch-torch-header.sh 참조). torch==2.10.0 고정이므로
+# pattern 미일치 = drift → 의도적으로 빌드 실패시킨다
 COPY <<EOF /tmp/patch_torch_header.py
 import os, sys, torch
 p = os.path.join(os.path.dirname(torch.__file__), "include", "ATen", "core", "List_inl.h")
@@ -68,15 +70,16 @@ else:
     sys.exit("List_inl.h pattern not found - torch version changed, re-check manually")
 EOF
 
-# ── 4. SageAttention v2 + v3 소스 빌드 (setup_config sage v220_cu13 방식) ─
+# ── 4. SageAttention v2 + v3 소스 빌드 (sm_120) ────────────────────────
 # v2 는 setup.py 가 TORCH_CUDA_ARCH_LIST 를 직접 읽으므로 패치 불필요 (upstream 확인 완료)
-RUN pip install --no-cache-dir --force-reinstall "setuptools<=75.8.2" ninja wheel && \
-    python3 /tmp/patch_torch_header.py && \
+RUN . /venv/main/bin/activate && \
+    pip install --no-cache-dir --force-reinstall "setuptools<=75.8.2" ninja wheel && \
+    python /tmp/patch_torch_header.py && \
     git clone --depth 1 https://github.com/thu-ml/SageAttention.git /tmp/sageattention && \
     cd /tmp/sageattention && \
     EXT_PARALLEL=1 pip install --no-cache-dir --no-build-isolation . && \
     cd sageattention3_blackwell && \
-    python3 -c "p='setup.py'; s=open(p).read(); o='cc_major, cc_minor = torch.cuda.get_device_capability()'; n='cc_major, cc_minor = (12, 0)  # patched: no GPU in CI, force sm_120a'; assert o in s, 'sage3 setup.py GPU-detection pattern changed'; open(p,'w').write(s.replace(o,n)); print('sage3 setup.py patched -> sm_120a')" && \
+    python -c "p='setup.py'; s=open(p).read(); o='cc_major, cc_minor = torch.cuda.get_device_capability()'; n='cc_major, cc_minor = (12, 0)  # patched: no GPU in CI, force sm_120a'; assert o in s, 'sage3 setup.py GPU-detection pattern changed'; open(p,'w').write(s.replace(o,n)); print('sage3 setup.py patched -> sm_120a')" && \
     pip install --no-cache-dir --no-build-isolation . && \
     rm -rf /tmp/sageattention
 
@@ -138,49 +141,47 @@ EOF
 # `pip download --no-binary :all:` would build sdist metadata in an isolated env where
 # flash-attn's setup.py does `import torch` at module scope and fails (no torch there) ->
 # fetch the sdist directly from PyPI's file host instead.
-RUN mkdir -p /tmp/flash-attn-src && \
+RUN . /venv/main/bin/activate && \
+    mkdir -p /tmp/flash-attn-src && \
     curl -fsSL -o /tmp/flash-attn-src/flash_attn-2.7.2.post1.tar.gz \
       https://files.pythonhosted.org/packages/source/f/flash-attn/flash_attn-2.7.2.post1.tar.gz && \
     tar -xzf /tmp/flash-attn-src/flash_attn-2.7.2.post1.tar.gz -C /tmp/flash-attn-src && \
     cd /tmp/flash-attn-src/flash_attn-2.7.2.post1 && \
-    python3 /tmp/patch_flash_setup.py && \
+    python /tmp/patch_flash_setup.py && \
     FLASH_ATTENTION_FORCE_BUILD=TRUE pip install --no-cache-dir --no-build-isolation . && \
     rm -rf /tmp/flash-attn-src
 
-# ── 6. Comfy Kitchen: sm120 네이티브 소스 빌드 (요건: with Attention) ────
+# ── 6. Comfy Kitchen: sm120 네이티브 소스 빌드 ─────────────────────────
 # NVFP4(+Blackwell) 에는 [cublas] extra 가 필요 (PyPI comfy-kitchen 문서)
 # nanobind>=2.0.0 / cmake>=3.26 는 pyproject 빌드 요구사항이지만 --no-build-isolation 이라
-# 미리 설치해둬야 한다 (jammy apt cmake 는 3.22). "120f" 는 NVFP4 에 필요한 family-specific
-# target (upstream 기본값도 120f 를 포함) — "120" 단독으로는 부족하다.
-RUN pip install --no-cache-dir "nanobind>=2.0.0" "cmake>=3.26"
-ENV COMFY_CUDA_ARCHS="120f"
-RUN pip uninstall -y comfy-kitchen && \
+# 미리 설치해둬야 한다. "120f" 는 NVFP4 에 필요한 family-specific target.
+RUN . /venv/main/bin/activate && \
+    pip install --no-cache-dir "nanobind>=2.0.0" "cmake>=3.26" && \
+    pip uninstall -y comfy-kitchen && \
     pip install --no-cache-dir --no-build-isolation "comfy-kitchen[cublas] @ git+https://github.com/Comfy-Org/comfy-kitchen.git" && \
-    python3 -c "from importlib.metadata import version; from packaging.version import Version; v=version('comfy-kitchen'); assert Version(v) >= Version('0.2.35'), v; print('comfy-kitchen', v, '(sm120 source build)')"
+    python -c "from importlib.metadata import version; from packaging.version import Version; v=version('comfy-kitchen'); assert Version(v) >= Version('0.2.35'), v; print('comfy-kitchen', v, '(sm120 source build)')"
 
-# ── 7. 사전 빌드 커널 휠: Lightx2v NVP4 + Nunchaku (RTX 50xx / sm120) ───
-RUN pip install --no-cache-dir \
+# ── 7. 사전 빌드 커널 휠: Lightx2v NVP4 + Nunchaku (RTX 50xx / sm120) ──
+RUN . /venv/main/bin/activate && \
+    pip install --no-cache-dir \
       https://github.com/deepbeepmeep/kernels/releases/download/Light2xv/lightx2v_kernel-0.0.2+torch2.10.0-cp311-abi3-linux_x86_64.whl && \
     pip install --no-cache-dir \
       https://github.com/nunchaku-ai/nunchaku/releases/download/v1.2.1/nunchaku-1.2.1+cu13.0torch2.10-cp311-cp311-linux_x86_64.whl
 
-# ── 8. 최종 검증 레이어 (GPU 없이 실패해야 할 것이 멀쩡히 통과 못하게) ────
+# ── 8. 최종 검증 (GPU 없이 실패해야 할 것이 멀쩡히 통과 못하게) ──────────
 # libcuda.so.1 는 빌드 환경에 없음 (stubs 디렉터리엔 libcuda.so 뿐) → 임시 심볼릭
-# 링크로 dlopen 을 우회하고, 검증이 끝나면 같은 RUN 안에서 제거해 런타임 이미지에
-# 남기지 않는다 (런타임에는 실제 드라이버 라이브러리가 마운트된다)
-RUN pip show flash-attn sageattention sageattn3 comfy-kitchen lightx2v_kernel nunchaku > /dev/null && \
+# 링크로 dlopen 을 우회하고, 검증이 끝나면 같은 RUN 안에서 제거한다.
+RUN . /venv/main/bin/activate && \
+    pip show flash-attn sageattention sageattn3 comfy-kitchen lightx2v_kernel nunchaku > /dev/null && \
     mkdir -p /tmp/cuda-stub-shim && \
     ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /tmp/cuda-stub-shim/libcuda.so.1 && \
-    LD_LIBRARY_PATH=/tmp/cuda-stub-shim:/usr/local/cuda/lib64/stubs python3 -c "\
+    LD_LIBRARY_PATH=/tmp/cuda-stub-shim:/usr/local/cuda/lib64/stubs python -c "\
 import torch, sageattention, sageattn3, flash_attn, comfy_kitchen; \
 assert torch.__version__.startswith('2.10.0') and torch.version.cuda.startswith('13'); \
 print('ALL KERNEL IMPORTS OK:', torch.__version__, torch.version.cuda)" && \
     rm -rf /tmp/cuda-stub-shim
 
-# ── 9. 사용자/entrypoint (기존 Dockerfile 과 동일) ──────────────────────
-RUN useradd -u 1000 -ms /bin/bash user
-RUN chown -R user:user /workspace
-RUN mkdir -p /home/user/.cache && chown -R user:user /home/user/.cache
-COPY entrypoint.sh /workspace/entrypoint.sh
-RUN chmod +x /workspace/entrypoint.sh
-ENTRYPOINT ["/workspace/entrypoint.sh"]
+# ── 9. Instance Portal / Supervisor 오버레이 (공식 파생 이미지와 동일) ──
+# ROOT/ 는 vast-ai/base-image 의 derivatives/pytorch/derivatives/wan2gp/ROOT 를
+# 그대로 vendoring 한 것. wan2gp.sh 에만 LD_LIBRARY_PATH unset 을 추가했다.
+COPY ROOT /

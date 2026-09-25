@@ -11,6 +11,10 @@ on:
         description: "nvcc 병렬度 (OOM 시 2)"
         required: false
         default: "4"
+      wan2gp_ref:
+        description: "Wan2GP 소스 ref (commit/branch/tag, 기본 main)"
+        required: false
+        default: "main"
 
 permissions:
   contents: read
@@ -71,6 +75,8 @@ jobs:
           build-args: |
             CUDA_ARCHITECTURES=12.0
             MAX_JOBS=${{ inputs.max_jobs }}
+            WAN2GP_REPO=https://github.com/chynggi/Wan2GP.git
+            WAN2GP_REF=${{ inputs.wan2gp_ref }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/wan2gp:${{ steps.meta.outputs.tag }}
             ghcr.io/${{ github.repository_owner }}/wan2gp:cuda-13.0

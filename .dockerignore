@@ -1,0 +1,31 @@
+# Build context hygiene for Dockerfile.vastai.
+# The image only needs ROOT/ + this Dockerfile; everything else is cloned at build
+# time. Excluding local state keeps the GHA context upload small.
+.git
+.worktrees
+.commandcode
+.superpowers
+.build
+.venv
+venv-windows
+workspaces
+outputs
+outputs2
+gradio_outputs
+ckpts
+loras
+loras_i2v
+models
+plugins
+finetunes
+settings
+defaults
+profiles
+*.zip
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.bak
+*.bak-*
+__pycache__

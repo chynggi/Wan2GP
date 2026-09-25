@@ -137,12 +137,12 @@ skipped on Ada/Hopper (sm >= 8.9), where the fp8 path still works.
 `finetunes/minimax_h3_ref2va_pruned_10eros_max_turbo_hybrid.json` and
 `finetunes/minimax_h3_fl2va_pruned_10eros_max_turbo_hybrid.json`.
 
-Register `TenStrip/10Eros-Max` `10Eros_Max_h3_TURBO-hybrid_beta5_w4a8_14gb_optimized.safetensors`
-as a local-path finetune for both the pruned Ref2VA and FL2VA architectures. The
-checkpoint's 474 weight bases match `MiniMax-H3-*_pruned` in shape exactly, so it
-is a pruned (20B) model, not the full 33B. The TURBO delta is baked into the
-weights, so no turbo LoRA is listed. Defaults: `num_inference_steps=6`,
-`guidance_scale=1.0`, `sample_solver=res_multistep`.
+Register `TenStrip/10Eros-Max` as a local-path TURBO finetune for both the pruned
+Ref2VA and FL2VA architectures. The checkpoint's 474 weight bases match
+`MiniMax-H3-*_pruned` in shape exactly, so it is a pruned (20B) model, not the
+full 33B. The TURBO delta is baked into the weights, so no turbo LoRA is listed.
+Defaults: `num_inference_steps=6`, `guidance_scale=1.0`,
+`sample_solver=res_multistep`.
 
 The non-Turbo pair
 `finetunes/minimax_h3_{ref2va,fl2va}_pruned_10eros_max_hybrid.json` registers
@@ -168,3 +168,54 @@ system cmake 4.2.3 and ninja are used. The source tree also held a stale
 hiding the freshly built `_C.cpython-311-...so`. Renamed it to
 `_C.abi3.so.py312-stale-bak` (safe to delete). `_probe_kitchen()` now returns
 `available` and `resolve_backend("auto") == "kitchen"`.
+
+## 2026-09-25 — 10Eros-Max H3 TURBO presets: W4A8 → INT8
+
+`finetunes/minimax_h3_ref2va_pruned_10eros_max_turbo_hybrid.json` and
+`finetunes/minimax_h3_fl2va_pruned_10eros_max_turbo_hybrid.json` now register
+`ckpts/10Eros_Max_h3_TURBO-hybrid_beta5_int8.safetensors` instead of the previous
+W4A8 checkpoint, which has been deleted (`ckpts/` and its HuggingFace download
+cache entries). Names, descriptions and info panels were updated from W4A8 to
+INT8; the sampling defaults are unchanged (`res_multistep`, 6 steps,
+`guidance_scale=1.0`).
+
+The matching saved presets in `settings/*10eros_max_turbo*_settings.json` had
+their display `type` string updated to the new name. The INT8 checkpoint uses a
+standard INT8 format rather than the W4A8 `weight_s_rel` fp8 layout, so it does
+not need the sm_86 cast from the 2026-09-23 W4A8 fix.
+
+## 2026-09-25 — vast.ai 이미지: 커스텀 deps 이미지 → vast 공식 파생 구조
+
+`Dockerfile.vastai` 는 이전에 `nvidia/cuda:13.0.0-cudnn-devel-ubuntu22.04` 기반의
+**의존성 전용 이미지**였고, 앱 코드를 런타임에 클론해 `/workspace/entrypoint.sh`
+로 실행해야 했다. 그래서 Instance Portal / Caddy / Supervisor / Jupyter / SSH
+같은 vast 공식 `vastai/wan2gp` 동작이 전혀 없었다.
+
+이제 vast 공식 파생 이미지(`vast-ai/base-image` →
+`derivatives/pytorch/derivatives/wan2gp`)와 동일한 구조로 재작성했다:
+
+- 베이스: `vastai/pytorch:2.10.0-cuda-13.0.3-py311-24.04-2026-09-08`
+  (torch 2.10.0+cu130, CUDA 13.0.3, cuDNN 9.14, Python 3.11, `/venv/main`,
+  `ENTRYPOINT=/opt/instance-tools/bin/entrypoint.sh`). 이미지가 torch 를
+  제공하므로 명시적 torch 설치와 `/opt/venv`·uv python 설치 단계는 제거했다.
+- `ROOT/` (신규): 공식 파생 이미지의 오버레이를 그대로 vendoring.
+  `etc/supervisor/conf.d/wan2gp.conf`, `opt/supervisor-scripts/wan2gp.sh`,
+  `etc/vast_boot.d/05-caddy-localhost-ports.sh`,
+  `etc/vast_capabilities.d/50-wan2gp.yaml`, `etc/vast_agents/wan2gp.md`,
+  `LICENSES.md`. `wan2gp.sh` 에만 `unset LD_LIBRARY_PATH` 를 추가했다 — 베이스가
+  `/usr/local/cuda/lib64` 를 `LD_LIBRARY_PATH` 에 넣어 torch cu130 번들 cuBLAS 를
+  가리고 `CUBLAS_STATUS_NOT_INITIALIZED` 를 유발하기 때문(`run-wangp.sh` 와 동일한
+  이유).
+- 앱 코드는 `WAN2GP_REPO`/`WAN2GP_REF` 로 `/opt/workspace-internal/Wan2GP` 에
+  클론한다(기본 포크 `main`). 베이스 이미지가 첫 부팅에 `/workspace/Wan2GP` 로
+  복사하고, Supervisor 서비스 `wan2gp` 가 `wgp.py --server-port 7860` 을 상시
+  실행한다. `entrypoint.sh` 는 이미지에서 더 이상 사용하지 않는다.
+- `.github/workflows/docker-vastai.yml` 에 `wan2gp_ref` 입력과 `WAN2GP_REPO`/
+  `WAN2GP_REF` build-arg 를 추가. `.dockerignore` 를 새로 추가해 빌드 컨텍스트를
+  `ROOT/` + Dockerfile 만 남긴다.
+
+커널 빌드 단계(SageAttention v2/v3, FlashAttention 2.7.2.post1, comfy-kitchen
+sm120, Lightx2v/Nunchaku 휠)는 그대로 유지하되 모든 `RUN` 을 `/venv/main`
+활성화 후 실행하도록 바꿨다(베이스의 `python3` 는 시스템 3.12 이므로). 커널
+휠이 cp311 이라 베이스의 Python 3.11 과 맞고, torch 계열 핀은 requirements 에서
+제거해 베이스 torch 를 단일 소스로 둔다.
