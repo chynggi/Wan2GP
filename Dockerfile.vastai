@@ -2,8 +2,9 @@
 #
 # vast 공식 파생 이미지(derivatives/pytorch/derivatives/wan2gp)와 동일한 UX:
 #   Instance Portal + Caddy(TLS/인증) + Supervisor 상시 실행 + Jupyter + SSH + Syncthing.
-# 차이는 베이스가 CUDA 13.0 / torch 2.10.0+cu130 이고, sm_120 커스텀 커널을 추가로
-# 빌드한다는 점이다 (SageAttention v2/v3, FlashAttention, comfy-kitchen, nunchaku).
+# 차이는 베이스가 CUDA 13.0 / torch 2.10.0+cu130 이고, sm_120 커널을 추가로
+# 빌드/설치한다는 점이다 (SageAttention v2/v3, comfy-kitchen 는 소스 빌드,
+# FlashAttention 2.8.3, Lightx2v, nunchaku 는 prebuilt 휠).
 #
 # 베이스: vastai/pytorch (vastai/base-image 파생)
 #   torch 2.10.0 (cu130 backend), CUDA toolkit 13.0.3, cuDNN 9.14, Python 3.11
@@ -83,73 +84,17 @@ RUN . /venv/main/bin/activate && \
     pip install --no-cache-dir --no-build-isolation . && \
     rm -rf /tmp/sageattention
 
-# ── 5. Flash Attention 2.7.2.post1 (docs/INSTALLATION.md Linux pin) ─────
-# 2.7.2.post1 의 setup.py 는 TORCH_CUDA_ARCH_LIST 를 무시하고 sm_80/sm_90 gencode 를 하드코딩한다
-# (CUDA>=11.8 이면 sm_90 도 추가) → sm_120 커널이 빠진다. sdist 를 받아 gencode 플래그를
-# TORCH_CUDA_ARCH_LIST 기반으로 생성하도록 패치한 뒤 --no-build-isolation 으로 빌드한다.
-COPY <<'EOF' /tmp/patch_flash_setup.py
-import os
-
-with open('setup.py', 'r') as f:
-    content = f.read()
-
-arch_list = os.environ.get('TORCH_CUDA_ARCH_LIST')
-gencode_lines = []
-for arch in arch_list.split(';'):
-    major, minor = arch.strip().split('.')
-    sm = f"{major}{minor}"
-    gencode_lines.append('    cc_flag.append("-gencode")')
-    gencode_lines.append(f'    cc_flag.append("arch=compute_{sm},code=sm_{sm}")')
-new_block = "\n".join(gencode_lines)
-
-old_block = (
-    '    cc_flag.append("-gencode")\n'
-    '    cc_flag.append("arch=compute_80,code=sm_80")\n'
-    '    if CUDA_HOME is not None:\n'
-    '        if bare_metal_version >= Version("11.8"):\n'
-    '            cc_flag.append("-gencode")\n'
-    '            cc_flag.append("arch=compute_90,code=sm_90")'
-)
-
-assert old_block in content, "flash-attn setup.py gencode pattern not found - upstream drift, re-check manually"
-
-content = content.replace(old_block, new_block)
-
-with open('setup.py', 'w') as f:
-    f.write(content)
-
-print(f"patched flash-attn setup.py gencode -> {arch_list}")
-
-# Bundled (old) cutlass gates the versioned driver-entry-point path on
-# `MAJOR >= 12 && MINOR >= 5`, which is false for CUDA 13.0 and falls back to
-# cudaGetDriverEntryPoint + unversioned PFN_* typedefs that CUDA 13 removed.
-hdr = 'csrc/cutlass/include/cutlass/cuda_host_adapter.hpp'
-with open(hdr, 'r') as f:
-    content = f.read()
-
-old_cond = '#if (__CUDACC_VER_MAJOR__ >= 12 && __CUDACC_VER_MINOR__ >= 5)'
-new_cond = '#if (__CUDACC_VER_MAJOR__ > 12 || (__CUDACC_VER_MAJOR__ == 12 && __CUDACC_VER_MINOR__ >= 5))'
-
-assert content.count(old_cond) == 1, "cutlass cuda_host_adapter.hpp version-check pattern not found - upstream drift, re-check manually"
-
-with open(hdr, 'w') as f:
-    f.write(content.replace(old_cond, new_cond))
-
-print("patched bundled cutlass cuda_host_adapter.hpp CUDA 13 version check")
-EOF
-
-# `pip download --no-binary :all:` would build sdist metadata in an isolated env where
-# flash-attn's setup.py does `import torch` at module scope and fails (no torch there) ->
-# fetch the sdist directly from PyPI's file host instead.
+# ── 5. FlashAttention 2.8.3 prebuilt 휠 (cu130 / torch 2.10 / cp311) ───
+# 기존에는 2.7.2.post1 sdist 를 받아 setup.py gencode 와 bundled cutlass 를 패치해
+# 소스 빌드했다. sm_80/90/100/120 fatbin 을 포함한 prebuilt 휠로 대체해 패치/빌드를
+# 제거한다 (vast.ai RTX 5090 검증 완료). Requires-Dist 는 torch/einops 무버전뿐이라
+# 베이스 torch 2.10.0+cu130 과 충돌하지 않는다.
+# 휠이 함께 싣는 hopper(FA3 소스) 패키지는 Wan2GP 가 참조하지 않고(FA3 는
+# flash_attn_interface 로 별도 설치) site-packages 최상위 네임스페이스만 점유하므로 제거한다.
 RUN . /venv/main/bin/activate && \
-    mkdir -p /tmp/flash-attn-src && \
-    curl -fsSL -o /tmp/flash-attn-src/flash_attn-2.7.2.post1.tar.gz \
-      https://files.pythonhosted.org/packages/source/f/flash-attn/flash_attn-2.7.2.post1.tar.gz && \
-    tar -xzf /tmp/flash-attn-src/flash_attn-2.7.2.post1.tar.gz -C /tmp/flash-attn-src && \
-    cd /tmp/flash-attn-src/flash_attn-2.7.2.post1 && \
-    python /tmp/patch_flash_setup.py && \
-    FLASH_ATTENTION_FORCE_BUILD=TRUE pip install --no-cache-dir --no-build-isolation . && \
-    rm -rf /tmp/flash-attn-src
+    pip install --no-cache-dir \
+      https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.0/flash_attn-2.8.3+cu130torch2.10-cp311-cp311-linux_x86_64.whl && \
+    python -c "import importlib.util, shutil; locs = importlib.util.find_spec('hopper').submodule_search_locations[0]; shutil.rmtree(locs); print('removed bundled hopper package from', locs)"
 
 # ── 6. Comfy Kitchen: sm120 네이티브 소스 빌드 ─────────────────────────
 # NVFP4(+Blackwell) 에는 [cublas] extra 가 필요 (PyPI comfy-kitchen 문서)
@@ -176,9 +121,10 @@ RUN . /venv/main/bin/activate && \
     mkdir -p /tmp/cuda-stub-shim && \
     ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /tmp/cuda-stub-shim/libcuda.so.1 && \
     LD_LIBRARY_PATH=/tmp/cuda-stub-shim:/usr/local/cuda/lib64/stubs python -c "\
-import torch, sageattention, sageattn3, flash_attn, comfy_kitchen; \
+import torch, sageattention, sageattn3, flash_attn, comfy_kitchen, importlib.util; \
 assert torch.__version__.startswith('2.10.0') and torch.version.cuda.startswith('13'); \
-print('ALL KERNEL IMPORTS OK:', torch.__version__, torch.version.cuda)" && \
+assert flash_attn.__version__ == '2.8.3' and importlib.util.find_spec('hopper') is None; \
+print('ALL KERNEL IMPORTS OK:', torch.__version__, torch.version.cuda, 'flash_attn', flash_attn.__version__)" && \
     rm -rf /tmp/cuda-stub-shim
 
 # ── 9. Instance Portal / Supervisor 오버레이 (공식 파생 이미지와 동일) ──

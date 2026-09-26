@@ -241,3 +241,27 @@ URL 이면 basename 으로 `ckpts/` 를 먼저 검색하므로 기존 파일을 
 파일 정의는 `finetunes/*.json` 을 매번 다시 읽는 `refresh_model_defs()` 로
 갱신되므로, JSON 수정 후 UI 의 모델 목록 새로고침(↻ / Alt+R)만으로 반영되고
 프로세스 재시작은 필요 없다.
+
+## 2026-09-26 — vast.ai: FlashAttention prebuilt 휠로 교체
+
+`Dockerfile.vastai` 의 FlashAttention 소스 빌드(2.7.2.post1 sdist + setup.py
+gencode 패치 + bundled cutlass CUDA 13 패치 + `FLASH_ATTENTION_FORCE_BUILD`
+빌드)를 prebuilt 휠 설치로 교체했다:
+
+`flash_attn-2.8.3+cu130torch2.10-cp311-cp311-linux_x86_64.whl`
+(mjun0812/flash-attention-prebuild-wheels v0.9.0, vast.ai RTX 5090 검증 완료)
+
+- 휠은 sm_80/90/100/120 fatbin 을 포함해 sm_120 커널을 제공하고, `Requires-Dist`
+  가 `torch`/`einops` 무버전뿐이라 베이스 torch 2.10.0+cu130 과 충돌하지 않는다.
+  `patch_flash_setup.py` 헤로독과 sdist 다운로드/빌드 단계가 통째로 사라진다.
+- 휠이 함께 싣는 `hopper`(FA3 소스) top-level 패키지는 Wan2GP 가 참조하지 않고
+  (FA3 는 `flash_attn_interface` 로만 취급 — `shared/attention.py`,
+  `preprocessing/sam3/perflib/fa3.py`) site-packages 네임스페이스만 점유하므로
+  설치 후 제거한다. 최종 검증 RUN 이 `hopper` 부재와 `flash_attn.__version__
+  == '2.8.3'` 을 assert 한다.
+- Wan2GP 호출부와 2.8.3 API 호환 확인: `_flash_attn_forward` 시그니처는
+  `models/hyvideo/modules/attenion.py` 의 `>= 2.7.0` 분기
+  (`window_size_left/right`, `softcap`, `alibi_slopes`)와 정확히 일치하고,
+  `flash_attn_varlen_func`/`flash_attn_with_kvcache` 는 반환값 단일 tensor 유지.
+  Windows 설치는 이미 2.8.3 휠(`setup_config.json` flash v210)을 쓰고 있어
+  버전 축이 플랫폼 간에 일치한다.
