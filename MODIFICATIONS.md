@@ -219,3 +219,25 @@ sm120, Lightx2v/Nunchaku 휠)는 그대로 유지하되 모든 `RUN` 을 `/venv/
 활성화 후 실행하도록 바꿨다(베이스의 `python3` 는 시스템 3.12 이므로). 커널
 휠이 cp311 이라 베이스의 Python 3.11 과 맞고, torch 계열 핀은 requirements 에서
 제거해 베이스 torch 를 단일 소스로 둔다.
+
+## 2026-09-26 — 10Eros-Max H3 finetune presets: HuggingFace URL 추가
+
+`finetunes/minimax_h3_{ref2va,fl2va}_pruned_10eros_max{,_turbo}_hybrid.json`
+네 개가 체크포인트를 로컬 경로(`ckpts/...`)로만 참조하고 있었다. 그래서
+`ckpts/` 가 비어 있는 원격 인스턴스에서 모델을 선택하면
+
+```
+Model 'ckpts/10Eros_Max_h3_hybrid_beta5_int8.safetensors' was not found locally
+and no URL was provided to download it. Please add an URL in the model definition file.
+```
+
+로 실패한다 (`wgp.py` `download_models()`, http 가 아니면 즉시 예외). 이제 네
+파일 모두 `TenStrip/10Eros-Max` 의 HuggingFace URL 을 가리킨다
+(`10Eros_Max_h3_hybrid_beta5_int8.safetensors`,
+`10Eros_Max_h3_TURBO-hybrid_beta5_int8.safetensors`).
+
+로컬 설치는 영향 없다: `shared/utils/files_locator.py` 의 `locate_file()` 이
+URL 이면 basename 으로 `ckpts/` 를 먼저 검색하므로 기존 파일을 그대로 쓴다.
+파일 정의는 `finetunes/*.json` 을 매번 다시 읽는 `refresh_model_defs()` 로
+갱신되므로, JSON 수정 후 UI 의 모델 목록 새로고침(↻ / Alt+R)만으로 반영되고
+프로세스 재시작은 필요 없다.

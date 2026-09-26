@@ -4,7 +4,7 @@
         "architecture": "minimax_h3_ref2va_pruned",
         "description": "10Eros-Max beta5 hybrid finetune for Reference-to-Video-and-Audio. TURBO delta is baked into the checkpoint, so no separate turbo LoRA is needed. INT8 quantized.",
         "URLs": [
-            "ckpts/10Eros_Max_h3_TURBO-hybrid_beta5_int8.safetensors"
+            "https://huggingface.co/TenStrip/10Eros-Max/resolve/main/10Eros_Max_h3_TURBO-hybrid_beta5_int8.safetensors"
         ],
         "infos": "## 10Eros Max H3 TURBO hybrid beta5 (INT8)\nA hybrid finetune with the reference and first/last-frame turbo deltas fused into the weights, so no turbo LoRA has to be loaded. Intended to work in both Ref2VA and FL2VA modes (also registered as a separate FL2VA finetune).\n\nRecommended sampling (per author):\n- RES Multistep, 6-8 steps (best motion)\n- Euler, 4-8 steps\n\nNotes:\n- Turbo is built in: do not add a turbo LoRA.\n- For reference generation, author recommends disabling cache and spectrum to avoid accuracy loss.\n- Quantization is INT8 (RTX 30-series or newer for the INT8 kernels)."
     },

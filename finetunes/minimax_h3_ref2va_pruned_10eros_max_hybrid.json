@@ -4,7 +4,7 @@
         "architecture": "minimax_h3_ref2va_pruned",
         "description": "10Eros-Max beta5 hybrid (non-Turbo) INT8 finetune for Reference-to-Video-and-Audio. Full-step model; no turbo LoRA is baked in.",
         "URLs": [
-            "ckpts/10Eros_Max_h3_hybrid_beta5_int8.safetensors"
+            "https://huggingface.co/TenStrip/10Eros-Max/resolve/main/10Eros_Max_h3_hybrid_beta5_int8.safetensors"
         ],
         "infos": "## 10Eros Max H3 hybrid beta5 INT8 (non-Turbo)\nThe full-step counterpart of the TURBO-hybrid beta5 finetune. No turbo delta is baked in, so it needs more sampling steps and no turbo LoRA should be added.\n\nSuggestion:\n- Use the default full-step settings (Euler, ~20 steps) or increase steps for quality.\n- Author notes that non-turbo full-step audio is better than the turbo versions.\n\nIntended to work in both Ref2VA and FL2VA modes (also registered as a separate FL2VA finetune)."
     }
